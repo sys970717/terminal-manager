@@ -1,0 +1,48 @@
+# Windows 설치파일(.exe)과 macOS 디스크 이미지(.dmg, Apple Silicon / Intel)를 빌드한다.
+# - 수동 실행(Actions 탭 → Run workflow) 또는 main 에 push: 결과물을 Actions 실행 화면의 Artifacts 로 올린다.
+# - v1.0.0 같은 태그를 push: 위 결과물을 GitHub Releases 에 붙인다.
+name: build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: --win
+          - os: macos-latest
+            target: --mac
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npx electron-builder ${{ matrix.target }} --publish never --config.directories.output=release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: terminal-manager-${{ runner.os }}
+          path: |
+            release/*.exe
+            release/*.dmg
+          if-no-files-found: error
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.exe
+            release/*.dmg

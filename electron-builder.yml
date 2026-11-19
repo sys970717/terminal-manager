@@ -1,0 +1,49 @@
+appId: com.terminalmanager.app
+productName: terminal-manager
+copyright: Copyright (c) 2026 sys970717
+directories:
+  buildResources: build
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!{dist,release,docs,assets,scripts,tests,.e2e-files,.mem-results,.git}/**'
+  - '!{.editorconfig,.gitignore}'
+asarUnpack:
+  - resources/**
+win:
+  executableName: terminal-manager
+nsis:
+  artifactName: ${name}-${version}-setup.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  # Apple 개발자 인증서가 없으므로 ad-hoc 서명만 한다 (Apple Silicon 은 서명이 없으면 실행이 안 됨).
+  # ad-hoc 서명에서는 hardened runtime 의 라이브러리 검증이 node-pty 네이티브 모듈 로딩을 막으므로 끈다.
+  identity: '-'
+  hardenedRuntime: false
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    - NSDocumentsFolderUsageDescription: SSH 업로드/다운로드에 문서 폴더를 사용합니다.
+    - NSDownloadsFolderUsageDescription: SSH 업로드/다운로드에 다운로드 폴더를 사용합니다.
+  notarize: false
+dmg:
+  artifactName: ${name}-${version}-${arch}.${ext}
+linux:
+  target:
+    - AppImage
+    - snap
+    - deb
+  maintainer: electronjs.org
+  category: Utility
+appImage:
+  artifactName: ${name}-${version}.${ext}
+npmRebuild: false
