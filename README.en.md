@@ -25,7 +25,7 @@ The app switches between Korean and English automatically based on your OS langu
 
 - **Drag-and-drop upload**: drop files or folders onto an SSH tab to upload them. Folders upload with all their contents, with a progress bar.
   If a file with the same name exists, you're asked before it's overwritten.
-- **Remote file panel**: open it with the `📁 Files` button on the right of an SSH tab.
+- **Remote file panel**: open it with the `📁 Files` button on the right of an SSH tab. Each tab opens and closes its own panel, and new tabs start with it closed.
   - Browse folders (double-click · ⬆ · ⌂ · type a path), see size / date / permissions, show hidden files
   - Drop onto the panel to upload into **the folder you're viewing**, or onto a folder row to upload into **that folder**.
   - Download, new folder, rename, delete (buttons · right-click menu · `F2` / `Delete` / `Ctrl+A` / arrow keys)
@@ -33,6 +33,18 @@ The app switches between Korean and English automatically based on your OS langu
   - The `cd here` button moves the terminal to the panel's folder.
 - Folders you can't access show `Permission denied: <path>`; the app follows the permissions of the account you logged in with.
 - Deleting asks for confirmation. Your home folder and `/` can't be deleted.
+
+### 3. Arrange tabs
+
+- **Drag** a tab to reorder it. While dragging, a marker shows where it will land.
+- **Right-click** a tab to open the tab menu. From the keyboard, press `Shift+F10` or the Menu key on a tab, then use the up/down arrows to pick an item.
+  - **Move to first**: moves the tab to the front.
+  - **Open in new window**: moves an SSH tab into its own window. Available when there are 2 or more tabs.
+- **Open in new window** reconnects to the same session in the new window.
+  - Once it connects, the original tab closes.
+  - If the connection fails or doesn't finish within 15 seconds, the new window closes and the original tab stays.
+    For a session without a saved password, enter it in the new window within those 15 seconds.
+  - Closing the main window also closes the windows you moved tabs into.
 
 ### Other features
 
@@ -75,6 +87,7 @@ Download the file for your OS from [Releases](../../releases).
 | New local terminal tab | `Ctrl+Shift+T` | `Cmd+Shift+T` |
 | Next / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Close tab | Middle-click the tab or `×` | Middle-click the tab or `×` |
+| Tab menu (Move to first / Open in new window) | Right-click the tab or `Shift+F10` | Right-click the tab |
 
 Why `Ctrl+Shift+K` instead of `Ctrl+K`: in a shell, `Ctrl+K` means "delete to end of line".
 
