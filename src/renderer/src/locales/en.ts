@@ -18,6 +18,12 @@ export const en: { [K in keyof typeof ko]: string } = {
   'tab.localTitleMac': 'Terminal',
   'tab.close': 'Close (middle-click)',
   'tab.newLocal': 'New local terminal ({mod}+Shift+T)',
+  'tab.menuLabel': 'Tab menu',
+  'tab.menu.moveFirst': 'Move to first',
+  'tab.menu.detach': 'Open in new window',
+  'tab.detach.failed': 'Could not move the tab to a new window. The original tab is kept.',
+  'tab.detach.timeout':
+    'The new window did not connect within 15 seconds. The original tab is kept.',
   'tabbar.quick': 'Quick Connect',
   'tabbar.quickTitle': 'Quick Connect ({mod}+Shift+K)',
   'empty.hint': 'Double-click a session on the left, or press {mod}+Shift+K to connect.',

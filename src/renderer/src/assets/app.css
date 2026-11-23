@@ -1191,3 +1191,27 @@ kbd {
   cursor: pointer;
   font: inherit;
 }
+
+/* ───────────── 탭 드래그 / 탭 우클릭 메뉴 ───────────── */
+.tab:focus-visible {
+  outline: 1px solid #3794ff;
+  outline-offset: -1px;
+}
+
+/* 드래그 중 놓일 위치 표시 (탭 사이의 파란 선) */
+.tab.drop-before {
+  box-shadow: inset 2px 0 0 #3794ff;
+}
+
+.tab.drop-after {
+  box-shadow: inset -2px 0 0 #3794ff;
+}
+
+.tab-menu .context-item:focus-visible {
+  background: #094771;
+  outline: none;
+}
+
+.tab-menu .context-item.disabled:focus-visible {
+  background: none;
+}

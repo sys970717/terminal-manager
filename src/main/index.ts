@@ -1,10 +1,13 @@
 // Copyright (c) 2026 sys970717 — PolyForm Perimeter 1.0.0
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
+import { randomUUID } from 'crypto'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { registerTermHandlers, killAllTerms } from './terms'
 import { registerSessionHandlers } from './sessionStore'
+import { registerWindowHandlers } from './windows'
+import { getTree } from './sessionStore'
 import { getLang, setLang } from './i18n'
 import { isLang, pickLang } from '../shared/i18n'
 
@@ -15,11 +18,22 @@ if (process.env['TM_USER_DATA']) app.setPath('userData', process.env['TM_USER_DA
 // 반드시 app ready 이전에 추가해야 렌더러 프로세스에 전달된다.
 if (import.meta.env.DEV) app.commandLine.appendSwitch('js-flags', '--expose-gc')
 
-function createWindow(): void {
+// 메인 창. 이 창이 닫히면 분리된(detach) 창도 모두 닫는다
+let mainWin: BrowserWindow | null = null
+
+interface WindowOpts {
+  /** 분리된 창: 크기를 조금 줄이고 포커스된 창 옆으로 어긋나게 연다 */
+  detached?: boolean
+}
+
+function createWindow(opts: WindowOpts = {}): BrowserWindow {
+  const anchor = opts.detached ? BrowserWindow.getFocusedWindow() : null
+  const [ax, ay] = anchor && !anchor.isDestroyed() ? anchor.getPosition() : [undefined, undefined]
   // Create the browser window.
   const mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 760,
+    width: opts.detached ? 1000 : 1200,
+    height: opts.detached ? 680 : 760,
+    ...(ax !== undefined && ay !== undefined ? { x: ax + 32, y: ay + 32 } : {}),
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#1e1e1e',
@@ -56,6 +70,16 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  if (!opts.detached) {
+    mainWin = mainWindow
+    mainWindow.once('closed', () => {
+      if (mainWin === mainWindow) mainWin = null
+      // 메인 창을 닫으면 분리된 창도 모두 닫는다 (각 창의 터미널은 destroyed 리스너가 정리)
+      for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.close()
+    })
+  }
+  return mainWindow
 }
 
 // This method will be called when Electron has finished
@@ -82,6 +106,23 @@ app.whenReady().then(() => {
   })
   registerSessionHandlers()
   registerTermHandlers()
+  // "새 창으로" 핸드셰이크 (핸들러는 한 번만 등록된다)
+  registerWindowHandlers(ipcMain, {
+    openWindow: () => {
+      const w = createWindow({ detached: true })
+      return {
+        id: w.id,
+        webContentsId: w.webContents.id,
+        isDestroyed: () => w.isDestroyed(),
+        close: () => w.close(),
+        onClosed: (cb) => void w.once('closed', cb)
+      }
+    },
+    isSshSession: (id) => getTree().sessions.some((x) => x.id === id),
+    newToken: () => randomUUID(),
+    setTimer: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>)
+  })
   // dev 전용 진단 IPC. 가드 안에서 동적 import 하므로 prod 번들에는 포함되지 않는다
   if (import.meta.env.DEV) void import('./diag').then((m) => m.registerDiag())
 

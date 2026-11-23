@@ -22,10 +22,12 @@ interface Props {
   active: boolean
   /** 연결 상태가 바뀔 때 App(탭 표시)에 알림 */
   onState?: (state: ConnState) => void
+  /** 파일 패널 열림 여부. 탭마다 따로이며 App 이 메모리에만 보관한다 (새 탭은 닫힌 채로 시작) */
+  panelOpen: boolean
+  onPanelChange: (open: boolean) => void
 }
 
-// 파일 패널 열림/너비는 모든 SSH 탭이 같이 쓴다 (마지막 상태를 기억)
-const PANEL_OPEN_KEY = 'tm.filePanel.open'
+// 파일 패널 너비만 모든 SSH 탭이 같이 쓴다 (마지막 값을 기억). 열림 여부는 탭별 state 라 저장하지 않는다
 const PANEL_WIDTH_KEY = 'tm.filePanel.width'
 const PANEL_MIN = 260
 const lsGet = (k: string): string | null => {
@@ -47,7 +49,13 @@ const lsSet = (k: string, v: string): void => {
  * 탭 하나 = TerminalView 하나. 로컬 PTY 또는 SSH 셸을 xterm.js 로 그림.
  * SSH 면 오른쪽에 원격 파일 패널(FilePanel)을 열 수 있고, 파일 드롭 → 패널에서 보고 있는 폴더(없으면 home)로 업로드
  */
-export default function TerminalView({ target, active, onState }: Props): React.JSX.Element {
+export default function TerminalView({
+  target,
+  active,
+  onState,
+  panelOpen,
+  onPanelChange
+}: Props): React.JSX.Element {
   const t = useT()
   const hostRef = useRef<HTMLDivElement>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -64,7 +72,6 @@ export default function TerminalView({ target, active, onState }: Props): React.
   const [dragOver, setDragOver] = useState(false)
   const [upload, setUpload] = useState<UploadProgress | null>(null)
   const [termId, setTermId] = useState<number | null>(null) // FilePanel 에 넘기는 용도 (termIdRef 와 같은 값)
-  const [panelOpen, setPanelOpen] = useState(() => lsGet(PANEL_OPEN_KEY) === '1')
   const [panelWidth, setPanelWidth] = useState(() =>
     Math.max(PANEL_MIN, Number(lsGet(PANEL_WIDTH_KEY)) || 420)
   )
@@ -280,8 +287,7 @@ export default function TerminalView({ target, active, onState }: Props): React.
   }
 
   const togglePanel = (open: boolean): void => {
-    setPanelOpen(open)
-    lsSet(PANEL_OPEN_KEY, open ? '1' : '0')
+    onPanelChange(open)
     if (!open) requestAnimationFrame(() => termRef.current?.focus())
   }
 

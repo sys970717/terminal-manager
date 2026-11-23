@@ -5,6 +5,8 @@ import { connectSsh } from './ssh'
 import { createTermRegistry } from './termRegistry'
 import { createGauge } from './gauge'
 import { t, type MainKey } from './i18n.ts'
+import { sendToOwner } from './ownerSend.ts'
+import { notifyShellOpened, notifyShellFailed } from './windows.ts'
 import type { RemoteListing, RemoveResult, UploadProgress } from '../shared/types'
 
 /**
@@ -15,6 +17,8 @@ import type { RemoteListing, RemoveResult, UploadProgress } from '../shared/type
 export interface TermEmitter {
   data: (data: string) => void
   exit: (code: number, reason?: string) => void
+  /** SSH 셸이 실제로 열렸다 (분리 창 detach 성공 판정용. 로컬 PTY 는 부르지 않는다) */
+  ready?: () => void
   progress: (p: Omit<UploadProgress, 'termId'>) => void
 }
 
@@ -25,7 +29,7 @@ export interface TermBackend {
   /** SSH 터미널만: 로컬 파일/폴더를 원격 폴더(remoteDir, 없으면 home)로 업로드 */
   upload?(localPaths: string[], remoteDir?: string): Promise<void>
   /** SSH 터미널만: 원격 폴더 목록 (path 가 없으면 home) */
-  listDir?(path?: string): Promise<RemoteListing>
+  listDir?(path?: string): Promise<Omit<RemoteListing, 'connId'>>
   /** SSH 터미널만: 원격 파일/폴더를 로컬로 (저장할 폴더는 main 이 대화상자로 묻는다) */
   download?(remotePaths: string[]): Promise<void>
   /** SSH 터미널만: dir 안에 새 폴더. 만든 경로를 돌려준다 */
@@ -52,9 +56,8 @@ export function getTermStats(): { terms: number; owners: number; ptys: number } 
 
 function emitterFor(id: number, owner: WebContents): TermEmitter {
   let exited = false
-  const send = (ch: string, ...args: unknown[]): void => {
-    if (!owner.isDestroyed()) owner.send(ch, id, ...args)
-  }
+  // 모든 main→renderer 전송은 sendToOwner 를 거친다 (닫힌 창에는 보내지 않는다)
+  const send = (ch: string, ...args: unknown[]): void => void sendToOwner(owner, ch, id, ...args)
   return {
     data: (d) => send('term:data', d),
     // 종료 알림은 한 번만 (kill 과 백엔드 자체 종료가 겹쳐도 term:exit 가 중복 전송되지 않는다)
@@ -62,12 +65,15 @@ function emitterFor(id: number, owner: WebContents): TermEmitter {
       if (exited) return
       exited = true
       registry.remove(id)
+      // 연결 오류로 끝났으면 대기 중인 detach 를 바로 실패시킨다 (성공 뒤에는 대기 항목이 없어 무시된다)
+      if (reason && !owner.isDestroyed()) notifyShellFailed(owner.id)
       send('term:exit', code, reason)
     },
+    ready: () => {
+      if (!owner.isDestroyed()) notifyShellOpened(owner.id)
+    },
     // 진행률은 termId 를 payload 안에 넣어서 보냄 (앞에 id 인자를 붙이지 않음)
-    progress: (p) => {
-      if (!owner.isDestroyed()) owner.send('term:upload-progress', { termId: id, ...p })
-    }
+    progress: (p) => void sendToOwner(owner, 'term:upload-progress', { termId: id, ...p })
   }
 }
 
@@ -172,7 +178,11 @@ export function registerTermHandlers(): void {
   ipcMain.handle('term:listDir', async (_e, id: number, path?: string) => {
     const term = registry.get(id)
     if (!term?.listDir) throw new Error(t('term.listSshOnly'))
-    return term.listDir(typeof path === 'string' && path ? path : undefined)
+    const listing = await term.listDir(typeof path === 'string' && path ? path : undefined)
+    // 기다리는 사이 탭이 닫혔거나(레지스트리에서 사라짐) 같은 id 가 아니면 응답을 폐기한다
+    if (registry.get(id) !== term) throw new Error(t('ssh.ended'))
+    // connId = 호출한 termId. 재연결하면 termId 가 바뀌므로 렌더러가 이전 연결의 응답을 걸러낼 수 있다
+    return { ...listing, connId: id }
   })
 
   // 파일 패널 동작. 렌더러가 보낸 값은 문자열인지 여기서 한 번 거른다 (경로 검사는 ssh.ts)
