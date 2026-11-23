@@ -1,6 +1,7 @@
 // Copyright (c) 2026 sys970717 — PolyForm Perimeter 1.0.0
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type {
+  DetachResult,
   DiagGcResult,
   DiagRendererInfo,
   DiagSnapshot,
@@ -11,7 +12,8 @@ import type {
   SessionInfo,
   SessionInput,
   SessionTree,
-  UploadProgress
+  UploadProgress,
+  WindowInit
 } from '../shared/types'
 import type { Lang } from '../shared/i18n'
 
@@ -90,6 +92,15 @@ const api = {
     getLang: (): Promise<Lang> => ipcRenderer.invoke('app:getLang'),
     /** main 쪽 메시지 언어도 맞춘다 */
     setLang: (lang: Lang): Promise<void> => ipcRenderer.invoke('app:setLang', lang)
+  },
+  win: {
+    /** SSH 탭을 새 창으로 분리 (다시 연결 방식). 새 창이 연결을 마치거나 15초가 지나면 응답한다. renderer 에는 세션 ID 만 넘긴다 */
+    detachSsh: (sessionId: string): Promise<DetachResult> =>
+      ipcRenderer.invoke('win:detachSsh', sessionId),
+    /** 새 창이 SSH ready 와 셸 열림을 모두 마쳤음을 알린다 (분리 창에서 한 번) */
+    detachReady: (token: string): void => ipcRenderer.send('win:detachReady', token),
+    /** 창이 시작할 때 읽는 초기 정보 (분리 창이면 detach 가 들어 있다) */
+    getInit: (): Promise<WindowInit> => ipcRenderer.invoke('win:getInit')
   },
   /** 드래그앤드롭한 File 의 로컬 경로 (Electron 32+ 에서 File.path 대체) */
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),

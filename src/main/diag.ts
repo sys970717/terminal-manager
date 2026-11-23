@@ -6,6 +6,7 @@ import { runInNewContext } from 'vm'
 import { setFlagsFromString } from 'v8'
 import { getSshStats } from './ssh'
 import { getTermStats } from './terms'
+import { getPendingDetachCount } from './windows'
 import type { DiagGcResult, DiagSnapshot } from '../shared/types'
 
 /**
@@ -16,7 +17,7 @@ import type { DiagGcResult, DiagSnapshot } from '../shared/types'
  */
 
 /** ipcMain.on 으로 등록하는 채널. 같은 채널의 리스너가 늘어나면 중복 등록 누수다 */
-const IPC_CHANNELS = ['term:write', 'term:resize', 'term:kill']
+const IPC_CHANNELS = ['term:write', 'term:resize', 'term:kill', 'win:detachReady']
 /** 렌더러(WebContents) 쪽에 붙이는 리스너. 터미널을 열고 닫아도 늘어나면 안 된다 */
 const WC_EVENTS = ['destroyed', 'render-process-gone', 'did-start-navigation'] as const
 
@@ -38,6 +39,14 @@ function getMainGc(): (() => void) | null {
   }
 }
 
+/** 창 수와 대기 중인 detach 수. snapshot 요청 때만 계산한다 (타이머 없음) */
+export function getWindowStats(): { count: number; pendingDetach: number } {
+  return {
+    count: BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed()).length,
+    pendingDetach: getPendingDetachCount()
+  }
+}
+
 export function snapshot(): DiagSnapshot {
   const t = getTermStats()
   const s = getSshStats()
@@ -49,6 +58,7 @@ export function snapshot(): DiagSnapshot {
   }
   return {
     ts: Date.now(),
+    windows: getWindowStats(),
     main: {
       terms: t.terms,
       owners: t.owners,
@@ -101,5 +111,7 @@ export function registerDiag(): void {
   ipcMain.handle('diag:snapshot', () => snapshot())
   ipcMain.handle('diag:gc', () => runGc())
   const stop = startPeriodicLog()
+  // before-quit 를 거치지 않는 종료 경로(will-quit)도 정리한다. stop 은 clearInterval 이라 두 번 불려도 안전하다
   app.once('before-quit', stop)
+  app.once('will-quit', stop)
 }

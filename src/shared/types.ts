@@ -97,6 +97,8 @@ export interface DiagRendererInfo {
 /** diag:snapshot 응답. main 의 자원 개수와 프로세스별 메모리 */
 export interface DiagSnapshot {
   ts: number
+  /** 창 수와 대기 중인 detach 수 (요청할 때만 계산) */
+  windows: { count: number; pendingDetach: number }
   main: {
     terms: number
     owners: number
@@ -132,7 +134,21 @@ export interface RemoteEntry {
 
 /** term:listDir 응답. path 는 서버가 풀어 준 절대 경로 (~ 나 .. 없음) */
 export interface RemoteListing {
+  /** 이 응답을 만든 연결(= 호출한 termId). 재연결 뒤 이전 연결의 늦은 응답을 렌더러가 버리는 데 쓴다 */
+  connId: number
   path: string
   home: string
   entries: RemoteEntry[]
+}
+
+// ───────────────────────── 새 창으로 분리 (win:*) ─────────────────────────
+
+/** win:detachSsh 응답. 성공하면 새 창이 SSH ready + 셸 열림까지 마친 것이다 */
+export type DetachResult =
+  | { ok: true; windowId: number }
+  | { ok: false; reason: 'not-ssh' | 'single-tab' | 'timeout' | 'failed' }
+
+/** win:getInit 응답. 분리된 새 창만 detach 값을 받는다 (비밀번호·키는 포함하지 않는다) */
+export interface WindowInit {
+  detach?: { sessionId: string; token: string }
 }

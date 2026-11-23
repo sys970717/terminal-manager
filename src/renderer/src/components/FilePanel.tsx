@@ -104,6 +104,10 @@ export default function FilePanel(props: Props): React.JSX.Element {
     value: '',
     busy: false
   })
+  const termIdRef = useRef(termId) // 응답이 왔을 때 "지금" 연결과 비교하기 위한 최신 termId
+  useEffect(() => {
+    termIdRef.current = termId
+  })
   const onCwdRef = useRef(onCwd) // 부모가 매번 새 함수를 넘겨도 목록을 다시 읽지 않게
   useEffect(() => {
     onCwdRef.current = onCwd
@@ -126,6 +130,11 @@ export default function FilePanel(props: Props): React.JSX.Element {
       window.api.term.listDir(termId, path).then(
         (l) => {
           if (req !== reqRef.current) return // 더 늦게 보낸 요청이 이미 있음
+          // 응답의 connId 가 지금 연결(termId)과 다르면 이전 연결의 응답이므로 버린다
+          if (l.connId !== termIdRef.current) {
+            setLoading(false) // 재연결/종료로 이전 연결이 된 응답: 화면에 반영하지 않는다
+            return
+          }
           const moved = l.path !== cwdRef.current
           cwdRef.current = l.path
           setListing(l)
@@ -155,6 +164,16 @@ export default function FilePanel(props: Props): React.JSX.Element {
     },
     [termId]
   )
+
+  // 연결(termId)이 바뀌거나 패널이 사라지면 진행 중인 요청을 무효화한다 (늦게 온 응답이 화면에 반영되지 않게).
+  // 새 요청은 아래 effect 가 이벤트(열림/재연결/업로드 완료)로만 보낸다. 폴링은 없다.
+  useEffect(() => {
+    const req = reqRef // 요청 번호 카운터 (DOM ref 아님)
+    return () => {
+      req.current++
+      setLoading(false)
+    }
+  }, [termId])
 
   // 열릴 때, 재연결(termId 변경) 때, 업로드가 끝났을 때 지금 폴더를 다시 읽는다
   useEffect(() => {

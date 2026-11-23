@@ -15,6 +15,8 @@ import {
 } from './sshAuth.ts'
 import { createKnownHosts, type KnownHosts } from './knownHosts.ts'
 import { createGauge } from './gauge.ts'
+import { createSftpHolder } from './sftpHolder.ts'
+import { createShellGate } from './shellGate.ts'
 import type { TermBackend, TermEmitter } from './terms'
 import type {
   ConnState,
@@ -128,9 +130,6 @@ export function connectSsh(
   const win = BrowserWindow.fromWebContents(owner)
   const conn = new Client()
   let stream: ClientChannel | null = null
-  let sftp: SFTPWrapper | null = null
-  let sftpOpening: Promise<SFTPWrapper> | null = null // 동시에 요청해도 SFTP 채널은 하나만 연다
-  let homeDir: string | null = null
   let size = { cols, rows }
   let state: ConnState = 'connecting'
   let lastError: string | undefined // 오류 종료 사유(현재 언어). 있으면 term:exit 의 reason 으로 전달
@@ -149,6 +148,20 @@ export function connectSsh(
   /** 연결이 종료되면 영원히 끝나지 않는 SFTP 대기(Promise)도 같이 reject 되게 한다 */
   const alive = <T>(p: Promise<T>): Promise<T> => Promise.race([p, endedSignal])
 
+  // SFTP 채널·home·열리는 중인 Promise 는 연결(conn)마다 따로. close/end 때 반드시 비운다 (아래 conn.on)
+  // 셸이 열릴 때까지 파일 조회를 기다리게 하는 문 (연결 중 조회가 "접속 안 됨" 으로 끝나 패널이 비는 것을 막는다)
+  const shellGate = createShellGate()
+  shellGate.wait().catch(() => {}) // 닫힌 뒤 아무도 기다리지 않아도 unhandledRejection 이 나지 않게
+  const holder = createSftpHolder<SFTPWrapper>({
+    open: (cb) => conn.sftp(cb),
+    isEnded: ended,
+    acquire: () => gauges.sftp.acquire(),
+    endedError: () => new Error(t('ssh.ended'))
+  })
+  // 다른 close 리스너(onClosed)보다 먼저 등록해서 항상 먼저 초기화한다. 이벤트 기반이며 타이머는 없다
+  conn.on('end', () => holder.reset())
+  conn.on('close', () => holder.reset())
+
   // 접속 전 비밀번호/암호 입력용 (터미널에서 직접 입력받음, 화면에 표시 안 함)
   let promptState: { buf: string; resolve: (v: string | null) => void } | null = null
   const prompt = (label: string): Promise<string | null> => {
@@ -159,14 +172,10 @@ export function connectSsh(
   /** 종료 정리: 입력 대기 해제, SFTP/셸/클라이언트(소켓과 keepalive 타이머 포함) 닫기 */
   const cleanup = (): void => {
     abort.abort()
+    shellGate.close(new Error(t('ssh.ended')))
     promptState?.resolve(null)
     promptState = null
-    try {
-      sftp?.end()
-    } catch {
-      // 이미 닫힘
-    }
-    sftp = null
+    holder.reset()
     stream = null
     conn.destroy()
   }
@@ -272,12 +281,14 @@ export function connectSsh(
         }
         if (ended()) return ch.close()
         stream = ch
+        shellGate.open()
         ch.once('close', gauges.streams.acquire()) // 채널이 실제로 닫힐 때 내려간다
         const out = new StringDecoder('utf8') // 한글 등 멀티바이트가 청크 경계에서 깨지지 않게
         const errOut = new StringDecoder('utf8')
         ch.on('data', (b: Buffer) => !ended() && emit.data(out.write(b)))
         ch.stderr.on('data', (b: Buffer) => !ended() && emit.data(errOut.write(b)))
         ch.on('close', onClosed)
+        emit.ready?.() // SSH ready 와 셸 열림을 모두 마친 시점 (분리 창 성공 판정)
       })
     })
     conn.on('error', (err) => {
@@ -297,33 +308,12 @@ export function connectSsh(
     }
   }
 
-  const getSftp = (): Promise<SFTPWrapper> => {
-    if (sftp) return Promise.resolve(sftp)
-    sftpOpening ??= new Promise<SFTPWrapper>((resolve, reject) => {
-      conn.sftp((err, s) => {
-        sftpOpening = null
-        if (err) return reject(err)
-        if (ended()) {
-          // 열리는 도중 탭이 닫힘: 새 채널을 쓰지 않고 바로 닫는다
-          s.end()
-          return reject(new Error(t('ssh.ended')))
-        }
-        sftp = s
-        const releaseSftp = gauges.sftp.acquire()
-        s.once('close', () => {
-          releaseSftp()
-          if (sftp === s) sftp = null
-        })
-        resolve(s)
-      })
-    })
-    return sftpOpening
-  }
+  const getSftp = (): Promise<SFTPWrapper> => holder.get()
 
   const realpath = (s: SFTPWrapper, p: string): Promise<string> =>
     new Promise((res, rej) => s.realpath(p, (e, r) => (e ? rej(sftpError(e, p)) : res(r))))
 
-  const getHome = async (s: SFTPWrapper): Promise<string> => (homeDir ??= await realpath(s, '.'))
+  const getHome = (): Promise<string> => holder.home((s) => realpath(s, '.'))
 
   // ssh2 콜백 API 를 Promise 로 (오류는 현재 언어의 메시지로)
   const readdirP = (s: SFTPWrapper, p: string): Promise<SftpItem[]> =>
@@ -346,11 +336,18 @@ export function connectSsh(
   const call = (p: string, fn: (cb: (e?: Error | null) => void) => void): Promise<void> =>
     new Promise((res, rej) => fn((e) => (e ? rej(sftpError(e, p)) : res())))
 
+  /** 셸이 열릴 때까지 기다린다. 이미 끝난 연결이면 바로 실패, 기다리는 도중 끝나도 reject */
+  const waitShell = async (notConnectedMsg: string): Promise<void> => {
+    if (ended()) throw new Error(notConnectedMsg)
+    await shellGate.wait()
+    if (!stream) throw new Error(notConnectedMsg)
+  }
+
   /** SFTP 작업 준비: 접속 확인, 채널, home */
   const ready = async (): Promise<{ s: SFTPWrapper; home: string }> => {
-    if (!stream) throw new Error(t('ssh.notConnected'))
+    await waitShell(t('ssh.notConnected'))
     const s = await getSftp()
-    return { s, home: await getHome(s) }
+    return { s, home: await getHome() }
   }
 
   const mkdirRemote = async (dir: string, name: string): Promise<string> => {
@@ -558,10 +555,10 @@ export function connectSsh(
   }
 
   /** 원격 폴더 목록. 링크는 대상을 stat 해서 폴더면 폴더로 보여준다 (열 수 있게) */
-  const listDir = async (path?: string): Promise<RemoteListing> => {
-    if (!stream) throw new Error(t('ssh.notConnectedList'))
+  const listDir = async (path?: string): Promise<Omit<RemoteListing, 'connId'>> => {
+    await waitShell(t('ssh.notConnectedList'))
     const s = await getSftp()
-    const home = await getHome(s)
+    const home = await getHome()
     const dir = await realpath(s, normalizeRemotePath(path ?? '', home))
     const raw = await readdirP(s, dir)
     const entries: RemoteEntry[] = await Promise.all(
@@ -581,7 +578,7 @@ export function connectSsh(
   const doUpload = async (localPaths: string[], remoteDir?: string): Promise<void> => {
     if (!stream) throw new Error(t('ssh.notConnected'))
     const s = await getSftp()
-    const home = await getHome(s)
+    const home = await getHome()
     // 받는 폴더: 파일 브라우저에서 고른 곳, 없으면 home
     const target = await realpath(s, normalizeRemotePath(remoteDir ?? '', home))
     const isDir = await new Promise<boolean>((res, rej) =>
